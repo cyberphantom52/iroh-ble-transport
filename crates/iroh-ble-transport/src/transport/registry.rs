@@ -1229,6 +1229,10 @@ impl Registry {
         };
         let broken_pipe_acks =
             Self::drain_to_draining(&mut self.next_lifecycle, entry, now, reason.clone());
+        // A device that keeps its address, like a bonded phone, never turns up as a new
+        // entry, so tombstoning this one would leave it unreachable. Keep a peer we were
+        // connected to alive and buffer what iroh sends during the drain.
+        entry.resume_after_drain = channel.is_some();
         actions.extend(broken_pipe_acks);
         if let Some(ch) = channel {
             actions.push(PeerAction::CloseChannel {
@@ -2599,12 +2603,16 @@ mod tests {
                     }
                     TargetLifecycleCommand::SendReserved { endpoint_seed } => {
                         let endpoint = iroh_base::SecretKey::from_bytes(&[endpoint_seed; 32]).public();
-                        if !matches!(
-                            phase_before,
-                            Some(PeerPhase::Connected { .. })
-                                | Some(PeerPhase::Draining { .. })
-                                | Some(PeerPhase::Dead { .. })
-                        ) {
+                        let resuming = matches!(phase_before, Some(PeerPhase::Draining { .. }))
+                            && reg.peer(&device_id).is_some_and(|e| e.resume_after_drain);
+                        if resuming
+                            || !matches!(
+                                phase_before,
+                                Some(PeerPhase::Connected { .. })
+                                    | Some(PeerPhase::Draining { .. })
+                                    | Some(PeerPhase::Dead { .. })
+                            )
+                        {
                             expected_target = Some(endpoint);
                         }
                         reg.handle(PeerCommand::SendDatagram {
@@ -2756,10 +2764,16 @@ mod tests {
                     MultiPeerCommand::SendReserved { device_idx, endpoint_seed } => {
                         let device_id = device_ids[usize::from(device_idx)].clone();
                         let endpoint = endpoint_from_seed(endpoint_seed);
-                        if !matches!(
-                            phase_before,
-                            Some(PhaseKind::Connected) | Some(PhaseKind::Draining) | Some(PhaseKind::Dead)
-                        ) {
+                        let resuming = matches!(phase_before, Some(PhaseKind::Draining))
+                            && reg.peer(&device_id).is_some_and(|e| e.resume_after_drain);
+                        if resuming
+                            || !matches!(
+                                phase_before,
+                                Some(PhaseKind::Connected)
+                                    | Some(PhaseKind::Draining)
+                                    | Some(PhaseKind::Dead)
+                            )
+                        {
                             expected_targets.insert(device_id.clone(), Some(endpoint));
                         }
                         reg.handle(PeerCommand::SendDatagram {
