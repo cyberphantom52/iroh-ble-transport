@@ -617,6 +617,21 @@ impl Registry {
             Buffer,
             StartAndEnqueue,
         }
+        // A reserved send is as good as an advertisement: it only exists for a device the
+        // scan has seen, so it shouldn't have to wait out DEAD_GC_TTL.
+        if target_endpoint.is_some()
+            && matches!(
+                entry.phase,
+                PeerPhase::Dead {
+                    reason: crate::transport::peer::DeadReason::MaxRetries
+                        | crate::transport::peer::DeadReason::Drained,
+                    ..
+                }
+            )
+        {
+            Self::clear_connection_state(&mut self.next_lifecycle, actions, entry);
+            entry.phase = PeerPhase::Unknown;
+        }
         let entry_phase_kind = PhaseKind::from(&entry.phase);
         let entry_tx_gen = entry.tx_gen;
         let resume_after_drain = entry.resume_after_drain;
@@ -2607,9 +2622,20 @@ mod tests {
                     }
                     TargetLifecycleCommand::SendReserved { endpoint_seed } => {
                         let endpoint = iroh_base::SecretKey::from_bytes(&[endpoint_seed; 32]).public();
-                        let resuming = matches!(phase_before, Some(PeerPhase::Draining { .. }))
+                        let revivable = reg.peer(&device_id).is_some_and(|e| {
+                            matches!(
+                                e.phase,
+                                PeerPhase::Dead {
+                                    reason: crate::transport::peer::DeadReason::MaxRetries
+                                        | crate::transport::peer::DeadReason::Drained,
+                                    ..
+                                }
+                            )
+                        });
+                                                let resuming = matches!(phase_before, Some(PeerPhase::Draining { .. }))
                             && reg.peer(&device_id).is_some_and(|e| e.resume_after_drain);
                         if resuming
+                            || revivable
                             || !matches!(
                                 phase_before,
                                 Some(PeerPhase::Connected { .. })
@@ -2768,9 +2794,20 @@ mod tests {
                     MultiPeerCommand::SendReserved { device_idx, endpoint_seed } => {
                         let device_id = device_ids[usize::from(device_idx)].clone();
                         let endpoint = endpoint_from_seed(endpoint_seed);
-                        let resuming = matches!(phase_before, Some(PhaseKind::Draining))
+                        let revivable = reg.peer(&device_id).is_some_and(|e| {
+                            matches!(
+                                e.phase,
+                                PeerPhase::Dead {
+                                    reason: crate::transport::peer::DeadReason::MaxRetries
+                                        | crate::transport::peer::DeadReason::Drained,
+                                    ..
+                                }
+                            )
+                        });
+                                                let resuming = matches!(phase_before, Some(PhaseKind::Draining))
                             && reg.peer(&device_id).is_some_and(|e| e.resume_after_drain);
                         if resuming
+                            || revivable
                             || !matches!(
                                 phase_before,
                                 Some(PhaseKind::Connected)
