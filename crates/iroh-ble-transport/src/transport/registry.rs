@@ -631,6 +631,10 @@ impl Registry {
                 }
             }
             PeerPhase::Discovered { .. } => SendDecision::StartAndEnqueue,
+            // A reserved send only reaches a device the scan has already seen. Waiting
+            // for another advertisement can take forever: BlueZ doesn't report repeats
+            // of the same advertisement from a device it already knows.
+            PeerPhase::Unknown if target_endpoint.is_some() => SendDecision::StartAndEnqueue,
             PeerPhase::Unknown
             | PeerPhase::PendingDial { .. }
             | PeerPhase::Connecting { .. }
