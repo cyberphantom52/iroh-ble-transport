@@ -713,6 +713,19 @@ impl BleTransport {
         self.routing.device_for_endpoint(endpoint_id)
     }
 
+    /// Tells the transport that `device` is `endpoint_id`, so sightings of
+    /// it count even when the scan doesn't report the peer's key prefix.
+    ///
+    /// BlueZ stops reporting advertised UUIDs for a device once its
+    /// services have been resolved, which is permanent for a bonded
+    /// device, so an application that already knows the device's identity
+    /// should supply it here. The identity is still proved by the
+    /// handshake; a wrong mapping only produces a failed connection.
+    pub fn add_known_device(&self, endpoint_id: &EndpointId, device: impl Into<blew::DeviceId>) {
+        let prefix = crate::transport::routing::prefix_from_endpoint(endpoint_id);
+        self.routing.note_known_device(device.into(), prefix);
+    }
+
     /// Returns `true` if the local scan has recently surfaced this
     /// peer's key prefix. Step 8 of the redesign: callers gate
     /// `join_peers`-style reconnect nudges on this so we don't pin

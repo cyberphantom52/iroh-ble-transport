@@ -235,6 +235,9 @@ struct RoutingInner {
     /// nearby under this public-key prefix" — a hint for dialing only;
     /// never an authority for routing.
     scan_hint: HashMap<KeyPrefix, DeviceId>,
+    /// Devices the application has identified itself, for platforms
+    /// that can stop reporting a device's advertised UUIDs.
+    known_devices: HashMap<DeviceId, KeyPrefix>,
     /// Pipes that exist but haven't been authenticated yet. Mutually
     /// exclusive with `routable` — a pipe is in exactly one pool at
     /// any moment (or neither, briefly, during promotion transitions).
@@ -404,6 +407,17 @@ impl Routing {
     #[must_use]
     pub fn pipes_for_debug(&self) -> Vec<Pipe> {
         self.inner.lock().pipes.values().cloned().collect()
+    }
+
+    /// Records which peer a device belongs to, so a sighting of it counts
+    /// even when the scan result doesn't carry the peer's key prefix.
+    pub fn note_known_device(&self, device: DeviceId, prefix: KeyPrefix) {
+        self.inner.lock().known_devices.insert(device, prefix);
+    }
+
+    /// The key prefix recorded by [`Routing::note_known_device`].
+    pub fn known_device_prefix(&self, device: &DeviceId) -> Option<KeyPrefix> {
+        self.inner.lock().known_devices.get(device).copied()
     }
 
     // ---------- scan_hint: KeyPrefix → DeviceId (dial-hint only) ----------
@@ -1443,6 +1457,15 @@ mod tests {
     }
 
     // ---------- address-layer helpers ----------
+
+    #[test]
+    fn known_device_resolves_to_its_prefix() {
+        let routing = Routing::new();
+        let device = DeviceId::from("AA:BB:CC:DD:EE:FF");
+        assert_eq!(routing.known_device_prefix(&device), None);
+        routing.note_known_device(device.clone(), [7u8; KEY_PREFIX_LEN]);
+        assert_eq!(routing.known_device_prefix(&device), Some([7u8; KEY_PREFIX_LEN]));
+    }
 
     #[test]
     fn token_custom_addr_roundtrip() {

@@ -44,7 +44,9 @@ pub async fn run_central_events(
     while let Some(ev) = events.next().await {
         let cmd = match ev {
             CentralEvent::DeviceDiscovered(device) => {
-                let Some(prefix) = extract_prefix_from_services(&device.services) else {
+                let prefix = extract_prefix_from_services(&device.services)
+                    .or_else(|| routing.known_device_prefix(&device.id));
+                let Some(prefix) = prefix else {
                     continue;
                 };
                 let rssi = device.rssi;
