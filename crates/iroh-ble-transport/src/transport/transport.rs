@@ -73,8 +73,10 @@ pub enum L2capPolicy {
 /// - [`Central::new`] + [`Peripheral::new`] are constructed with
 ///   default config at `build` time
 /// - [`InMemoryPeerStore`] (non-durable across restarts)
+/// - scanning on
 pub struct BleTransportBuilder {
     l2cap_policy: L2capPolicy,
+    scan: bool,
     central: Option<Arc<Central>>,
     peripheral: Option<Arc<Peripheral>>,
     peer_store: Option<Arc<dyn PeerStore>>,
@@ -84,6 +86,7 @@ impl BleTransportBuilder {
     fn new() -> Self {
         Self {
             l2cap_policy: L2capPolicy::default(),
+            scan: true,
             central: None,
             peripheral: None,
             peer_store: None,
@@ -94,6 +97,19 @@ impl BleTransportBuilder {
     #[must_use]
     pub fn l2cap_policy(mut self, policy: L2capPolicy) -> Self {
         self.l2cap_policy = policy;
+        self
+    }
+
+    /// Whether this node scans for peers. Defaults to `true`.
+    ///
+    /// A node that doesn't scan still advertises and accepts connections,
+    /// so a peer that does scan can reach it, but it can't dial anyone
+    /// itself. This suits a battery-powered device paired with one that
+    /// can afford to scan, and keeps the two from connecting to each other
+    /// in both directions at once.
+    #[must_use]
+    pub fn scan(mut self, scan: bool) -> Self {
+        self.scan = scan;
         self
     }
 
@@ -159,7 +175,15 @@ impl BleTransportBuilder {
         let store = self
             .peer_store
             .unwrap_or_else(|| Arc::new(InMemoryPeerStore::new()));
-        BleTransport::construct(endpoint_id, central, peripheral, store, self.l2cap_policy).await
+        BleTransport::construct(
+            endpoint_id,
+            central,
+            peripheral,
+            store,
+            self.l2cap_policy,
+            self.scan,
+        )
+        .await
     }
 }
 
@@ -167,6 +191,7 @@ impl std::fmt::Debug for BleTransportBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BleTransportBuilder")
             .field("l2cap_policy", &self.l2cap_policy)
+            .field("scan", &self.scan)
             .field("central", &self.central.is_some())
             .field("peripheral", &self.peripheral.is_some())
             .field("peer_store", &self.peer_store.is_some())
@@ -435,6 +460,7 @@ impl BleTransport {
         peripheral: Arc<Peripheral>,
         store: Arc<dyn PeerStore>,
         l2cap_policy: L2capPolicy,
+        scan: bool,
     ) -> BleResult<Arc<Self>> {
         let central_for_rollback = Arc::clone(&central);
         let peripheral_for_rollback = Arc::clone(&peripheral);
@@ -445,6 +471,7 @@ impl BleTransport {
             peripheral,
             store,
             l2cap_policy,
+            scan,
             &mut rollback,
         )
         .await
@@ -465,6 +492,7 @@ impl BleTransport {
         peripheral: Arc<Peripheral>,
         store: Arc<dyn PeerStore>,
         l2cap_policy: L2capPolicy,
+        scan: bool,
         rollback: &mut ConstructRollback,
     ) -> BleResult<Arc<Self>> {
         central
@@ -498,17 +526,23 @@ impl BleTransport {
         info!(key_uuid = %key_uuid, "advertising started");
 
         let scan_filter = blew::central::ScanFilter::default();
-        rollback.scanning = true;
-        let scanning = construct_step("start_scan", async {
-            match central.start_scan(scan_filter.clone()).await {
-                Ok(()) => Ok(true),
-                Err(BlewError::NotSupported) => Ok(false),
-                Err(e) => Err(BleError::from(e)),
-            }
-        })
-        .await?;
+        let scanning = if scan {
+            rollback.scanning = true;
+            construct_step("start_scan", async {
+                match central.start_scan(scan_filter.clone()).await {
+                    Ok(()) => Ok(true),
+                    Err(BlewError::NotSupported) => Ok(false),
+                    Err(e) => Err(BleError::from(e)),
+                }
+            })
+            .await?
+        } else {
+            false
+        };
         if scanning {
             info!("scanning for iroh-ble peers");
+        } else if !scan {
+            info!("not scanning; advertising only");
         } else {
             rollback.scanning = false;
             warn!("central start_scan not supported; discovery disabled");
