@@ -15,3 +15,7 @@ tag-message = "{{crate_name}}: release {{version}}"
 pre-release-commit-message = "{{crate_name}}: release {{version}}"
 push = true
 publish = true
+
+# AdvertisingConfig::service_data is not in a blew release yet.
+[patch.crates-io]
+blew = { git = "https://github.com/cyberphantom52/blew", branch = "phon" }

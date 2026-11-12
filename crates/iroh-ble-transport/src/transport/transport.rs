@@ -514,6 +514,10 @@ impl BleTransport {
         let advertising_config = AdvertisingConfig {
             local_name: LocalName::None,
             service_uuids: vec![key_uuid],
+            // Repeated as service data for centrals whose stack does not report
+            // the advertised service list; see `run_central_events`. Only the
+            // key matters: the byte is there because BlueZ rejects empty data.
+            service_data: vec![(key_uuid, vec![0u8])],
         };
         rollback.advertising = true;
         construct_step("start_advertising", async {

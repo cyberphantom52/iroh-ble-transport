@@ -88,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .start_advertising(&AdvertisingConfig {
             local_name: LocalName::Temporary(DEVICE_NAME.to_string()),
             service_uuids: vec![SERVICE_UUID],
+            ..Default::default()
         })
         .await?;
 

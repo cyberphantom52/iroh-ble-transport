@@ -14,12 +14,14 @@ use uuid::Uuid;
 use crate::transport::peer::{KEY_PREFIX_LEN, KeyPrefix, PeerCommand};
 use crate::transport::routing::{Routing, ScanHintUpdate};
 
-/// Extract the 12-byte key prefix from a list of advertised service UUIDs.
+/// Extract the 12-byte key prefix from advertised service UUIDs.
 ///
 /// Returns `Some(prefix)` if any UUID starts with the iroh magic prefix
 /// `69 72 6f 00`, indicating an iroh-ble peer. The remaining 12 bytes of
 /// that UUID carry the first 12 bytes of the peer's Ed25519 public key.
-pub fn extract_prefix_from_services(services: &[Uuid]) -> Option<KeyPrefix> {
+pub fn extract_prefix_from_services<'a>(
+    services: impl IntoIterator<Item = &'a Uuid>,
+) -> Option<KeyPrefix> {
     for svc in services {
         let bytes = svc.as_bytes();
         if bytes[0..4] == [0x69, 0x72, 0x6f, 0x00] {
@@ -44,7 +46,15 @@ pub async fn run_central_events(
     while let Some(ev) = events.next().await {
         let cmd = match ev {
             CentralEvent::DeviceDiscovered(device) => {
-                let Some(prefix) = extract_prefix_from_services(&device.services) else {
+                // The key UUID is advertised twice: in the service list and as a
+                // service data key. BlueZ stops updating the service list of a
+                // device it holds a classic connection to, and reports whatever
+                // the device's SDP records said when that connection was made,
+                // so a phone that is also paired for calls can lose its key UUID
+                // there. Service data keeps coming from the advertisement.
+                let Some(prefix) = extract_prefix_from_services(&device.services)
+                    .or_else(|| extract_prefix_from_services(device.service_data.keys()))
+                else {
                     continue;
                 };
                 let rssi = device.rssi;
@@ -305,7 +315,15 @@ mod tests {
     }
 
     #[test]
+    fn extract_prefix_from_service_data_keys() {
+        let svc = uuid!("69726f00-0102-0304-0506-070809100b0c");
+        let data = std::collections::HashMap::from([(svc, Vec::<u8>::new())]);
+        let prefix = extract_prefix_from_services(data.keys()).unwrap();
+        assert_eq!(prefix, svc.as_bytes()[4..16]);
+    }
+
+    #[test]
     fn extract_prefix_empty() {
-        assert!(extract_prefix_from_services(&[]).is_none());
+        assert!(extract_prefix_from_services(&[] as &[Uuid]).is_none());
     }
 }
